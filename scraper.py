@@ -1,6 +1,9 @@
+from flask import Flask, request, jsonify
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
+
+app = Flask(__name__)
 
 def get_html(url):
     try:
@@ -74,8 +77,9 @@ def scrape_website(base_url):
     scrape_page(base_url, 0)
 
     return all_html
+
 def chat_with_gpt(context, prompt):
-    openai_api_key = 'your-key' #add your key here
+    openai_api_key = 'YOUR KEY'
     api_url = 'https://api.openai.com/v1/chat/completions'
     
     headers = {
@@ -92,7 +96,7 @@ def chat_with_gpt(context, prompt):
     messages.append({"role": "user", "content": prompt})
 
     data = {
-        "model": "gpt-3.5-turbo-1106",
+        "model": "gpt-4-turbo",
         "messages": messages
     }
 
@@ -104,21 +108,32 @@ def chat_with_gpt(context, prompt):
         print(f"Error with API request: {response.status_code}, {response.text}")
         return None
 
-def main():
-    base_url = 'YOUR URL' #add your url here
+@app.route('/scrape', methods=['POST'])
+def scrape():
+    data = request.get_json()
+    base_url = data.get('url')
+    if not base_url:
+        return jsonify({'error': 'No URL provided'}), 400
+        
     scraped_html = scrape_website(base_url)
     
     soup = BeautifulSoup(scraped_html, 'html.parser')
     text_content = soup.get_text()
     
-    prompt = "YOUR PROMPT" #add your prompt here
+    prompt = (
+        "Extract the following information in JSON format: Company Name, Employee Count, Founder LinkedIn Links, "
+        "Products, and Sectors. For Founder LinkedIn Links, ensure you find the official LinkedIn profiles of the founders. "
+        "Verify the accuracy of the LinkedIn links for founders by checking their names and roles. Ensure the products and sectors are correctly identified. "
+        "Exclude any information if it is uncertain or ambiguous, and translate any non-English information into English. If you are unsure about any detail, omit it from the response. "
+        "Your output should only be valid JSON, do not include any other text."
+    )
     
+
     response = chat_with_gpt(text_content, prompt)
     if response:
-        print("ChatGPT Response:")
-        print(response)
+        return jsonify({'result': response})
     else:
-        print("Failed to get response from ChatGPT API")
+        return jsonify({'error': 'Failed to get response from ChatGPT API'}), 500
 
 if __name__ == '__main__':
-    main()
+    app.run(debug=True)
