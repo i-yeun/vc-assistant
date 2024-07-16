@@ -1,7 +1,35 @@
-from flask import Flask, request, jsonify
+import logging
 import requests
+import os
+import json
+from flask import Flask, request, jsonify
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
+from supabase import create_client, Client
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Debug: Print all environment variables
+print("Environment Variables:")
+for key, value in os.environ.items():
+    print(f"{key}: {value}")
+
+supabase_url = "sike"
+supabase_key = "sike"
+openai_api_key = "sike"
+
+# Debug statements to check if the variables are loaded
+print(f"Supabase URL: {supabase_url}")
+print(f"Supabase Key: {supabase_key}")
+
+if not supabase_url or not supabase_key:
+    raise ValueError("Supabase URL and Key must be provided")
+
+supabase: Client = create_client(supabase_url, supabase_key)
+
+logging.basicConfig(level=logging.DEBUG, filename='scraper.log', filemode='w')
 
 app = Flask(__name__)
 
@@ -10,6 +38,7 @@ def get_html(url):
         response = requests.get(url)
         response.raise_for_status()
         html = response.text
+        logging.debug(f"Fetched HTML from {url}: {html[:500]}")  # Log first 500 characters
         soup = BeautifulSoup(html, 'html.parser')
 
         for tag in soup(["script", "style", "img"]):
@@ -25,7 +54,7 @@ def get_html(url):
 
         return main_content, links, soup
     except requests.RequestException as e:
-        print(f"Error fetching {url}: {e}")
+        logging.error(f"Error fetching {url}: {e}")
         return None, set(), None
 
 def get_links(html, base_url):
@@ -58,7 +87,7 @@ def scrape_website(base_url):
             return
         visited.add(url)
 
-        print(f"Scraping: {url}")
+        logging.debug(f"Scraping: {url}")
 
         max_depth = 2 if url.startswith(domain_quivr) else 1
 
@@ -79,7 +108,9 @@ def scrape_website(base_url):
     return all_html
 
 def chat_with_gpt(context, prompt):
-    openai_api_key = 'YOUR KEY'
+    if not openai_api_key:
+        raise ValueError("OpenAI API key must be provided")
+
     api_url = 'https://api.openai.com/v1/chat/completions'
     
     headers = {
@@ -103,7 +134,17 @@ def chat_with_gpt(context, prompt):
     response = requests.post(api_url, headers=headers, json=data)
     if response.status_code == 200:
         result = response.json()['choices'][0]['message']['content']
-        return result
+        
+        # Clean up the result to ensure it's valid JSON
+        result = result.strip().strip('```json').strip('```').strip()
+        
+        # Parse the cleaned result to ensure it's valid JSON
+        try:
+            json_result = json.loads(result)
+            return json_result
+        except json.JSONDecodeError as e:
+            print(f"JSON decode error: {e}")
+            return None
     else:
         print(f"Error with API request: {response.status_code}, {response.text}")
         return None
@@ -114,12 +155,15 @@ def scrape():
     base_url = data.get('url')
     if not base_url:
         return jsonify({'error': 'No URL provided'}), 400
-        
+    
+    # Scrape the website content
     scraped_html = scrape_website(base_url)
     
+    # Parse the scraped HTML content
     soup = BeautifulSoup(scraped_html, 'html.parser')
     text_content = soup.get_text()
     
+    # Define the prompt for the GPT model
     prompt = (
         "Extract the following information in JSON format: Company Name, Employee Count, Founder LinkedIn Links, "
         "Products, and Sectors. For Founder LinkedIn Links, ensure you find the official LinkedIn profiles of the founders. "
@@ -128,12 +172,12 @@ def scrape():
         "Your output should only be valid JSON, do not include any other text."
     )
     
-
+    # Get the response from the GPT model
     response = chat_with_gpt(text_content, prompt)
     if response:
-        return jsonify({'result': response})
+        return jsonify(response)
     else:
         return jsonify({'error': 'Failed to get response from ChatGPT API'}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=8080)
